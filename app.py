@@ -1,11 +1,17 @@
 import os, subprocess, json, datetime, openai, requests, base64, numpy as np, sqlite3
 from flask import Flask, jsonify, request, abort
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
 # Configure OPENAI API Key
-api_key = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjIzZjIwMDI2NjhAZHMuc3R1ZHkuaWl0bS5hYy5pbiJ9.oHkm2vWDFwiqvacRpSPFo0bLk4Uzp_QdyfACnV-zk20"
+api_key = os.environ.get("AIPROXY_TOKEN")
+
+if not api_key:
+    raise ValueError("AIPROXY_TOKEN environment variable is not set.")
 
 user_email = "23f2002668@ds.study.iitm.ac.in"
 
@@ -17,6 +23,24 @@ user_email = "23f2002668@ds.study.iitm.ac.in"
 @app.route("/", methods=["GET"])
 def home():
     return "Server is running!", 200
+
+
+
+# ------------------------------------------------------------------------------------------------------ #
+
+
+
+def validate_path(path):
+    data_dir = Path("data").resolve()
+    resolved_path = Path(path).resolve()
+
+    if not resolved_path.is_relative_to(data_dir):
+        raise ValueError("Access to files outside /data is not allowed.")
+    if not resolved_path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    print(resolved_path)
+    return True
 
 
 # ------------------------------------------------------------------------------------------------------ #
@@ -43,7 +67,7 @@ def first(input_file, pyfile):
 
 
 # Get the steps of tasks from the LLM
-def parse_task(task):
+def parse_task(task, api_key):
     url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
@@ -55,7 +79,7 @@ def parse_task(task):
         "messages": [
             {
                 "role": "system",
-                "content": f"Parse the following task description into structured JSON format strictly with same keys as mentioned : 1. 'inputFilePath', 2. 'operation', 3. 'outputFilePath'. If the operation is to run url of python then extract last python file name (xyz.py) from link and then input file have value the entire url link and operation just have a list with 'run' at 0th index and then file name like ['run', 'xyz.py']. If the operation is to format the content using prettier the the operation should have value a list with 'format' at 0th index and then 'prettier' like ['format', 'prettier']. If the operation is performed on weekdays like tuesday or etc., then the operation should have value a list with 0th index 'day' and then the operated day like ['day' , 'Tuesday']. If the operation is sorting like sorting contacts, etc., then the value of 'operation' should be a list with operation to be performed 'sort' at 0th index which is given as ['sort', 'first name', 'last name', and so on..]. If the opeartion is to sort 'most frequent', 'least frequent' or 'most recent' or 'least recent' n log files then the value of 'operation' should be a list with operation to be performed 'sort log' at 0th index which is given as ['sort log', 'n', 'least frequent']. If the operation has to perform on markdown file then the operation should have value a list with 0th index 'md' like ['md', '#', 'H1']. If the operation is about extracting information such as reciever mobile number then the value of 'operation' should be a list with operation to be performed 'extract' at 0th index which is given as ['extract', 'extract the reciever mobile number']. If the operation is to extract some information like mobile number from image then the value of operation should be a list with 'image' at 0th index and extracting information 'mobile number' after it like ['image', 'mobile number']. If the operation requires or use embeddings then operation should have a string value which is 'embedding'. If the operation have to perform on database then the operation should have value list with 'database' at 0th index and then table name, item like ['database', 'ticket', 'Silver']. Here The task is given as '{task}'"
+                "content": f"Parse the following task description into structured JSON format strictly with same keys as mentioned : 1. 'inputFilePath', 2. 'operation', 3. 'outputFilePath'. If there is no inputFilePath or outputFilePath mentioned in task then the value of it should be 'No'. If the operation is to run url of python not the github repo clone then extract last python file name (xyz.py) from link and then input file have value the entire url link and operation just have a list with 'run' at 0th index and then file name like ['run', 'xyz.py']. If the operation is to format the content using prettier the the operation should have value a list with 'format' at 0th index and then 'prettier' like ['format', 'prettier']. If the operation is performed on weekdays like tuesday or etc., then the operation should have value a list with 0th index 'day' and then the operated day like ['day' , 'Tuesday']. If the operation is sorting like sorting contacts, etc., then the value of 'operation' should be a list with operation to be performed 'sort' at 0th index which is given as ['sort', 'first name', 'last name', and so on..]. If the opeartion is to sort 'most frequent', 'least frequent' or 'most recent' or 'least recent' n log files then the value of 'operation' should be a list with operation to be performed 'sort log' at 0th index which is given as ['sort log', 'n', 'least frequent']. If the operation has to perform on markdown file then the operation should have value a list with 0th index 'md' like ['md', '#', 'H1']. If the operation is about extracting information such as reciever mobile number then the value of 'operation' should be a list with operation to be performed 'extract' at 0th index which is given as ['extract', 'extract the reciever mobile number']. If the operation is to extract some information like mobile number from image then the value of operation should be a list with 'image' at 0th index and extracting information 'mobile number' after it like ['image', 'mobile number']. If the operation requires or use embeddings then operation should have a string value which is 'embedding'. If the operation have to perform on database like 'The SQLite database file /data/ticket-sales.db has a tickets with columns type, units, and price. What is the total sales of all the items in the “Silver” ticket type?' then the operation should have value list with 'database' at 0th index and then table name, item like ['database', 'tickets', 'Silver']. If the operation is to delete then the value of operation should be a list with 'delete' at 0th index like ['delete']. Here The task is given as '{task}'"
             },
             {
                 "role": "user",
@@ -73,7 +97,72 @@ def parse_task(task):
 
 
 
+
 # ------------------------------------------------------------------------------------------------------ #
+
+
+
+
+def parse_task_B(task, api_key):
+    url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a task parser. Parse the following task description into structured JSON format. "
+                    "Output only Python programs or Bash commands without any extra keywords. "
+                    "The broad additional tasks are listed for automation. But the tasks are not defined more precisely."
+                    "You must able to handle these tasks as well come up with that are outside of this list."
+                    "The tasks could be as follows :"
+                    "B1. Fetch data from an API and save it."
+                    "B2. Clone a git repo and make a commit"
+                    "B3. Run a SQL query on a SQLite or DuckDB database"
+                    "B4. Extract data from (i.e. scrape) a website"
+                    "B5. Compress or resize an image"
+                    "B6. Transcribe audio from an MP3 file"
+                    "B7. Convert Markdown to HTML"
+                    "B8. Write an API endpoint that filters a CSV file and returns JSON data"
+                    "Use the following schema:\n"
+                    "{\n"
+                    "  \"application_type\": \"PYTHON/BASH\",\n"
+                    "  \"task_code\": \"code as string\"\n"
+                    "}"
+                )
+            },
+            {
+                "role": "user",
+                "content": task
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+
+    if response.status_code == 200:
+        result = response.json()
+        try:
+            result_content = result["choices"][0]["message"]["content"]
+            parsed_result = json.loads(result_content)
+            return parsed_result
+        except (KeyError, json.JSONDecodeError) as e:
+            print(f"Error parsing response: {e}")
+            return None
+    else:
+        print(f"Request failed with status code: {response.status_code}")
+        return None
+
+
+
+
+
+# ------------------------------------------------------------------------------------------------------ #
+
 
 
 
@@ -359,9 +448,9 @@ def calculate_gold_sales(db_file, output_file, item, table):
     query = f"""
         SELECT SUM(units * price) 
         FROM {table} 
-        WHERE type = {item};
+        WHERE type = ?;
     """
-    cursor.execute(query)
+    cursor.execute(query, (item,))
     total_sales = cursor.fetchone()[0]
 
     if total_sales is None:
@@ -503,6 +592,11 @@ def execute_step(input_file, operation, output_file):
 
 
 
+    else:
+        return 'Completed !'
+
+
+
 
 # ------------------------------------------------------------------------------------------------------ #
 
@@ -515,17 +609,44 @@ def run_task():
     print(f"Task : {task}")
 
     try:
-        l = parse_task(task)
+        l = parse_task(task, api_key)
         input_file, operation, output_file = l[0], l[1], l[2]
         input_file, output_file = input_file[1:], output_file[1:]
 
         print(f"Task  :   {l} \nInput File   :   {input_file} \nOperation   :   {operation} \nOutput File   :   {output_file}")
 
-        response = execute_step(input_file, operation, output_file)
+        if ".py" not in input_file and input_file != "o":
+            iv = validate_path(input_file)
+            print(iv)
+        else:
+            iv = True
 
-        print(response)
+        if iv :
+            if 'delete' not in operation:
+                response = execute_step(input_file, operation, output_file)
+                print(response)
 
-        return jsonify({"status": "success"}), 200
+                if response == 'Completed !':
+                    response = parse_task_B(task, api_key)
+
+                    if response['application_type'] == "BASH":
+                        steps = response['task_code']
+                        subprocess.run(steps, shell=True, capture_output=True)
+                        print("Subprocess commands run successfully !")
+
+                    elif response['application_type'] == "PYTHON":
+                        steps = response['task_code']
+                        print(steps)
+                        exec(steps)
+                        print("Subprocess commands run successfully !")
+
+                return jsonify({"status": "success"}), 200
+
+            else:
+                return jsonify({"status": "success", "message" : "Sorry ! Data cannot be deleted in any codition."}), 200
+
+        else:
+            return jsonify({"status": "success", "message" : "Data outside /data is never accessed or exfiltrated !"}), 200
 
     except Exception as e:
         abort(500, description=str(e))
@@ -540,13 +661,21 @@ def run_task():
 def read_file():
     file_path = request.args.get("path")
     file_path = file_path[1:]
-    if not file_path:
-        abort(400, description="File path is required")
-    if not os.path.exists(file_path):
-        abort(404, description="File not found")
-    with open(file_path, 'r') as f:
-        content = f.read()
-    return content, 200
+
+    v = validate_path(file_path)
+
+    if v:
+        if not file_path:
+            abort(400, description="File path is required")
+        if not os.path.exists(file_path):
+            abort(404, description="File not found")
+        with open(file_path, 'r') as f:
+            content = f.read()
+        return content, 200
+
+    else:
+        return "Data outside /data is never accessed or exfiltrated !"
+
 
 
 
@@ -569,5 +698,5 @@ docker run -e AIPROXY_TOKEN=$AIPROXY_TOKEN -p 8000:8000 dataworks-agent
 
 # Test the API
 
-curl -X POST "http://localhost:8000/run?task=
+curl -X POST "http://localhost:8000/run?task=Install+uv+(if+required)+and+run+https://raw.githubusercontent.com/sanand0/tools-in-data-science-public/tds-2025-01/project-1/datagen.py+with+${user.email}+as+the+only+argument.+(NOTE:+This+will+generate+data+files+required+for+the+next+tasks.)"
 """
