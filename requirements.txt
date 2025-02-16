@@ -1,0 +1,10 @@
+Flask>=2.0.0
+Werkzeug>=2.0.0
+google-generativeai
+openai
+numpy
+pathlib
+python-dotenv
+requests
+Pillow
+Faker
